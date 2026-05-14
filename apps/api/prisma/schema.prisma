@@ -1,0 +1,114 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum AuditStatus {
+  QUEUED
+  UPLOADING
+  PARSING
+  SLITHER
+  MYTHRIL
+  AI_ANALYSIS
+  REPORT_GENERATION
+  COMPLETED
+  FAILED
+}
+
+enum Severity {
+  CRITICAL
+  HIGH
+  MEDIUM
+  LOW
+  INFO
+}
+
+model User {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  name         String?
+  passwordHash String
+  company      String?
+  role         String   @default("USER")
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  audits       Audit[]
+}
+
+model Audit {
+  id                String             @id @default(cuid())
+  userId            String
+  title             String
+  status            AuditStatus        @default(QUEUED)
+  overallScore      Int                @default(0)
+  criticalCount     Int                @default(0)
+  highCount         Int                @default(0)
+  mediumCount       Int                @default(0)
+  lowCount          Int                @default(0)
+  executiveSummary  String?
+  analyzerRaw       Json?
+  gasOptimizations  Json?
+  createdAt         DateTime           @default(now())
+  updatedAt         DateTime           @updatedAt
+  user              User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  contracts         Contract[]
+  vulnerabilities   Vulnerability[]
+  reports           Report[]
+  recommendations   AiRecommendation[]
+
+  @@index([userId, createdAt])
+}
+
+model Contract {
+  id        String   @id @default(cuid())
+  auditId   String
+  fileName  String
+  source    String
+  ast       Json?
+  createdAt DateTime @default(now())
+  audit     Audit    @relation(fields: [auditId], references: [id], onDelete: Cascade)
+}
+
+model Vulnerability {
+  id             String   @id @default(cuid())
+  auditId        String
+  title          String
+  category       String
+  severity       Severity
+  confidence     Float    @default(0.7)
+  file           String?
+  lineStart      Int?
+  lineEnd        Int?
+  snippet        String?
+  explanation    String
+  recommendation String
+  fixedCode      String?
+  source         String   @default("AI")
+  createdAt      DateTime @default(now())
+  audit          Audit    @relation(fields: [auditId], references: [id], onDelete: Cascade)
+}
+
+model Report {
+  id          String   @id @default(cuid())
+  auditId     String
+  jsonPath    String?
+  markdownPath String?
+  pdfPath     String?
+  createdAt   DateTime @default(now())
+  audit       Audit    @relation(fields: [auditId], references: [id], onDelete: Cascade)
+}
+
+model AiRecommendation {
+  id        String   @id @default(cuid())
+  auditId   String
+  type      String
+  title     String
+  body      String
+  code      String?
+  createdAt DateTime @default(now())
+  audit     Audit    @relation(fields: [auditId], references: [id], onDelete: Cascade)
+}
