@@ -10,6 +10,15 @@ import { AnalyzerFinding } from '../types';
 
 const execFileAsync = promisify(execFile);
 
+type HeuristicCheck = {
+  pattern: RegExp;
+  title: string;
+  category: string;
+  severity: AnalyzerFinding['severity'];
+  recommendation: string;
+  confidence?: number;
+};
+
 @Injectable()
 export class AnalyzerService {
   async parseContracts(contracts: Contract[]) {
@@ -92,15 +101,11 @@ export class AnalyzerService {
   private heuristicFindings(contracts: Contract[], source: string, error: unknown): AnalyzerFinding[] {
     const findings: AnalyzerFinding[] = [];
     for (const contract of contracts) {
-      const checks: Array<[RegExp, AnalyzerFinding]> = [
-        [/tx\.origin/, this.finding(contract, 'tx.origin authentication', 'TX_ORIGIN', 'HIGH', 'Use msg.sender or role-based access control.', source)],
-        [/delegatecall/, this.finding(contract, 'Delegatecall usage', 'DELEGATECALL', 'HIGH', 'Avoid delegatecall or constrain targets to trusted implementations.', source)],
-        [/\.call\{value:/, this.finding(contract, 'Unsafe external value call', 'EXTERNAL_CALL', 'HIGH', 'Use checks-effects-interactions and ReentrancyGuard.', source)],
-        [/for\s*\(/, this.finding(contract, 'Loop requires gas review', 'DOS_GAS', 'MEDIUM', 'Bound loops and avoid user-controlled iteration.', source)],
-        [/price|oracle/i, this.finding(contract, 'Oracle manipulation review', 'ORACLE', 'MEDIUM', 'Use TWAPs, heartbeat checks, and deviation bounds.', source)]
-      ];
-      for (const [regex, finding] of checks) {
-        if (regex.test(contract.source)) findings.push(finding);
+      for (const check of this.heuristicChecks()) {
+        const match = this.findMatch(contract.source, check.pattern);
+        if (match) {
+          findings.push(this.finding(contract, check, source, match));
+        }
       }
     }
     if (!findings.length && error) {
@@ -117,15 +122,133 @@ export class AnalyzerService {
     return findings;
   }
 
-  private finding(contract: Contract, title: string, category: string, severity: AnalyzerFinding['severity'], recommendation: string, source: string): AnalyzerFinding {
+  private heuristicChecks(): HeuristicCheck[] {
+    return [
+      {
+        pattern: /tx\.origin/,
+        title: 'tx.origin authentication',
+        category: 'TX_ORIGIN',
+        severity: 'HIGH',
+        recommendation: 'Use msg.sender or role-based access control instead of tx.origin.'
+      },
+      {
+        pattern: /delegatecall/,
+        title: 'Delegatecall usage',
+        category: 'DELEGATECALL',
+        severity: 'HIGH',
+        recommendation: 'Avoid delegatecall or constrain targets to trusted, immutable implementations.'
+      },
+      {
+        pattern: /\.call\s*\{[^}]*value\s*:/,
+        title: 'Unsafe external value call',
+        category: 'EXTERNAL_CALL',
+        severity: 'HIGH',
+        recommendation: 'Use checks-effects-interactions and ReentrancyGuard around value-transferring calls.'
+      },
+      {
+        pattern: /\.call\s*\{[^}]*value\s*:[\s\S]{0,800}(?:balances?|_balances|totalSupply|locked|owner)\s*(?:\[.*?\])?\s*(?:=|\+=|-=|\+\+|--)/,
+        title: 'Possible reentrancy state update after external call',
+        category: 'REENTRANCY',
+        severity: 'CRITICAL',
+        confidence: 0.78,
+        recommendation: 'Update internal state before external calls and protect the function with a reentrancy guard.'
+      },
+      {
+        pattern: /(?:^|[{\n;]\s*)\w+\s*\.\s*(?:transfer|transferFrom|approve)\s*\([^;]+;/m,
+        title: 'Unchecked ERC20 operation',
+        category: 'UNCHECKED_ERC20_TRANSFER',
+        severity: 'MEDIUM',
+        confidence: 0.68,
+        recommendation: 'Check the returned boolean or use OpenZeppelin SafeERC20 wrappers.'
+      },
+      {
+        pattern: /block\.timestamp|\bnow\b/,
+        title: 'Timestamp-dependent logic',
+        category: 'TIMESTAMP_DEPENDENCE',
+        severity: 'MEDIUM',
+        recommendation: 'Do not use block timestamps for precise authorization, randomness, or short deadline decisions.'
+      },
+      {
+        pattern: /(?:keccak256|sha256)\s*\([^;]*(?:block\.timestamp|blockhash|block\.prevrandao|block\.difficulty|msg\.sender)[^;]*\)/,
+        title: 'Weak on-chain randomness',
+        category: 'WEAK_RANDOMNESS',
+        severity: 'HIGH',
+        confidence: 0.76,
+        recommendation: 'Use a verifiable randomness source such as Chainlink VRF for adversarial randomness.'
+      },
+      {
+        pattern: /\bselfdestruct\s*\(/,
+        title: 'Selfdestruct reachable in contract',
+        category: 'SELFDESTRUCT',
+        severity: 'HIGH',
+        recommendation: 'Remove selfdestruct or strictly gate it behind audited emergency governance.'
+      },
+      {
+        pattern: /\bassembly\s*\{/,
+        title: 'Inline assembly requires manual review',
+        category: 'INLINE_ASSEMBLY',
+        severity: 'LOW',
+        confidence: 0.62,
+        recommendation: 'Review memory safety, storage slot usage, and external call handling in assembly blocks.'
+      },
+      {
+        pattern: /function\s+initialize\s*\([^)]*\)\s*(?:public|external)(?![^{;]*(?:initializer|onlyOwner|reinitializer|admin|owner))/,
+        title: 'Initializer lacks access control',
+        category: 'UNPROTECTED_INITIALIZER',
+        severity: 'HIGH',
+        confidence: 0.74,
+        recommendation: 'Protect initializer functions with initializer and appropriate ownership or role checks.'
+      },
+      {
+        pattern: /pragma\s+solidity\s+\^(?:0\.[0-7]\.|[1-7]\.)/,
+        title: 'Outdated Solidity compiler range',
+        category: 'OUTDATED_COMPILER',
+        severity: 'LOW',
+        confidence: 0.66,
+        recommendation: 'Use a current Solidity 0.8.x compiler and pin the version used by CI and deployments.'
+      },
+      {
+        pattern: /for\s*\(/,
+        title: 'Loop requires gas review',
+        category: 'DOS_GAS',
+        severity: 'MEDIUM',
+        recommendation: 'Bound loops and avoid user-controlled iteration over unbounded storage.'
+      },
+      {
+        pattern: /price|oracle/i,
+        title: 'Oracle manipulation review',
+        category: 'ORACLE',
+        severity: 'MEDIUM',
+        recommendation: 'Use TWAPs, heartbeat checks, and deviation bounds for price-sensitive logic.'
+      }
+    ];
+  }
+
+  private findMatch(source: string, pattern: RegExp): { lineStart: number; snippet: string } | undefined {
+    const match = source.match(pattern);
+    if (!match || match.index === undefined) return undefined;
+    const before = source.slice(0, match.index);
+    const lineStart = before.split(/\r?\n/).length;
+    const line = source.split(/\r?\n/)[lineStart - 1]?.trim();
+    return { lineStart, snippet: line?.slice(0, 240) ?? match[0].slice(0, 240) };
+  }
+
+  private finding(
+    contract: Contract,
+    check: HeuristicCheck,
+    source: string,
+    match: { lineStart: number; snippet: string }
+  ): AnalyzerFinding {
     return {
-      title,
-      category,
-      severity,
-      confidence: 0.72,
+      title: check.title,
+      category: check.category,
+      severity: check.severity,
+      confidence: check.confidence ?? 0.72,
       file: contract.fileName,
-      explanation: `${title} was detected in ${contract.fileName}.`,
-      recommendation,
+      lineStart: match.lineStart,
+      snippet: match.snippet,
+      explanation: `${check.title} was detected in ${contract.fileName}.`,
+      recommendation: check.recommendation,
       source: source.toUpperCase() === 'SLITHER' ? 'SLITHER' : source.toUpperCase() === 'MYTHRIL' ? 'MYTHRIL' : 'AST'
     };
   }

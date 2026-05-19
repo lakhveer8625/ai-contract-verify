@@ -5,17 +5,22 @@ import { useParams } from 'next/navigation';
 import { useQuery } from '@tanstack/react-query';
 import { Download, RefreshCw } from 'lucide-react';
 import { Nav } from '@/components/nav';
+import { ProtectedRoute } from '@/components/auth/protected-route';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { StatusStream } from '@/components/audit/status-stream';
 import { VulnerabilityCard } from '@/components/audit/vulnerability-card';
 import { api, getToken } from '@/lib/api';
+import { useAuth } from '@/store/auth';
 
 export default function AuditReportPage() {
   const params = useParams<{ id: string }>();
+  const hydrated = useAuth((state) => state.hydrated);
+  const user = useAuth((state) => state.user);
   const { data: audit, isLoading, refetch } = useQuery({
     queryKey: ['audit', params.id],
     queryFn: () => api.audit(params.id),
+    enabled: hydrated && Boolean(user),
     refetchInterval: (query) => (query.state.data?.status === 'COMPLETED' || query.state.data?.status === 'FAILED' ? false : 3000)
   });
 
@@ -33,7 +38,8 @@ export default function AuditReportPage() {
   return (
     <main className="min-h-screen bg-background">
       <Nav />
-      <div className="mx-auto max-w-7xl px-4 pb-16 pt-24">
+      <ProtectedRoute>
+        <div className="mx-auto max-w-7xl px-4 pb-16 pt-24">
         {isLoading || !audit ? (
           <div className="grid gap-4 md:grid-cols-3">
             {[1, 2, 3].map((item) => (
@@ -101,6 +107,7 @@ export default function AuditReportPage() {
           </>
         )}
       </div>
+      </ProtectedRoute>
     </main>
   );
 }

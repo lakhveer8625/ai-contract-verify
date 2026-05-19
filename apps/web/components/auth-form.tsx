@@ -1,7 +1,7 @@
 'use client';
 
-import { FormEvent, useState } from 'react';
-import { useRouter } from 'next/navigation';
+import { FormEvent, useEffect, useState } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import { ShieldCheck, Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -22,6 +22,7 @@ function Field({ id, label, ...props }: { id: string; label: string } & React.In
 
 export function AuthForm({ mode }: { mode: 'login' | 'register' }) {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const auth = useAuth();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -29,6 +30,11 @@ export function AuthForm({ mode }: { mode: 'login' | 'register' }) {
   const [company, setCompany] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  const next = safeNext(searchParams.get('next'));
+
+  useEffect(() => {
+    if (auth.hydrated && auth.user) router.replace(next);
+  }, [auth.hydrated, auth.user, next, router]);
 
   async function submit(event: FormEvent) {
     event.preventDefault();
@@ -37,7 +43,7 @@ export function AuthForm({ mode }: { mode: 'login' | 'register' }) {
     try {
       if (mode === 'login') await auth.login(email, password);
       else await auth.register({ email, password, name, company });
-      router.push('/dashboard');
+      router.push(next);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Authentication failed');
     } finally {
@@ -123,7 +129,7 @@ export function AuthForm({ mode }: { mode: 'login' | 'register' }) {
 
       <p className="text-center text-sm">
         <Link
-          href={isLogin ? '/register' : '/login'}
+          href={isLogin ? `/register?next=${encodeURIComponent(next)}` : `/login?next=${encodeURIComponent(next)}`}
           className="font-medium text-primary underline-offset-4 hover:underline"
         >
           {isLogin ? 'Create a free account' : 'Sign in instead'}
@@ -131,4 +137,9 @@ export function AuthForm({ mode }: { mode: 'login' | 'register' }) {
       </p>
     </Card>
   );
+}
+
+function safeNext(value: string | null) {
+  if (!value || !value.startsWith('/') || value.startsWith('//')) return '/dashboard';
+  return value;
 }

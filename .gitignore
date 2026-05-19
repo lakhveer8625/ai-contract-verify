@@ -15,6 +15,10 @@ apps/**/.env.local
 # runtime data
 uploads
 reports
+!apps/api/src/reports/
+apps/api/src/reports/*
+!apps/api/src/reports/report-generator.service.ts
+!apps/api/src/reports/report-generator.service.spec.ts
 
 # misc
 .DS_Store

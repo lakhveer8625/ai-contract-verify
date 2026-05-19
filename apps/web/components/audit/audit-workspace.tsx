@@ -8,6 +8,8 @@ import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { api } from '@/lib/api';
+import { loginPath } from '@/components/auth/protected-route';
+import { useAuth } from '@/store/auth';
 
 const MonacoEditor = dynamic(() => import('@monaco-editor/react'), { ssr: false });
 
@@ -34,6 +36,9 @@ type FileEntry = { name: string; source: string };
 export function AuditWorkspace() {
   const router = useRouter();
   const inputRef = useRef<HTMLInputElement>(null);
+  const hydrated = useAuth((state) => state.hydrated);
+  const user = useAuth((state) => state.user);
+  const logout = useAuth((state) => state.logout);
 
   const [title, setTitle] = useState('Vault audit');
   const [uploadedFiles, setUploadedFiles] = useState<FileEntry[]>([]);
@@ -92,6 +97,10 @@ export function AuditWorkspace() {
 
   async function submit(event: FormEvent) {
     event.preventDefault();
+    if (!hydrated || !user) {
+      router.push(loginPath('/audit'));
+      return;
+    }
     setLoading(true);
     setError('');
     try {
@@ -110,7 +119,13 @@ export function AuditWorkspace() {
       }
       router.push(`/audit/${audit.id}`);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Audit creation failed');
+      const message = err instanceof Error ? err.message : 'Audit creation failed';
+      if (/unauthorized|jwt|token/i.test(message)) {
+        logout();
+        router.push(loginPath('/audit'));
+        return;
+      }
+      setError(message);
     } finally {
       setLoading(false);
     }
@@ -235,7 +250,7 @@ export function AuditWorkspace() {
             value={editorValue}
             onChange={handleEditorChange}
             beforeMount={(monaco) => {
-              if (!monaco.languages.getLanguages().some((l) => l.id === 'sol')) {
+              if (!monaco.languages.getLanguages().some((language: { id: string }) => language.id === 'sol')) {
                 monaco.languages.register({ id: 'sol' });
                 monaco.languages.setMonarchTokensProvider('sol', {
                   keywords: ['pragma', 'solidity', 'contract', 'interface', 'library', 'function', 'modifier', 'event', 'constructor',
