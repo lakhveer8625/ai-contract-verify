@@ -11,7 +11,7 @@ FROM node:22-bookworm-slim AS runner
 WORKDIR /app
 RUN apt-get update \
   && apt-get install -y --no-install-recommends python3 python3-pip git build-essential ca-certificates \
-  && pip3 install --break-system-packages slither-analyzer mythril \
+  && pip3 install --break-system-packages --no-cache-dir --prefer-binary --default-timeout=100 slither-analyzer mythril \
   && apt-get clean \
   && rm -rf /var/lib/apt/lists/*
 COPY --from=deps /app/node_modules ./node_modules
